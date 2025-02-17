@@ -1,7 +1,20 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.functions import explode, col, from_json
-from pyspark.sql.types import ArrayType, StructType, StructField, StringType, BooleanType
+from pyspark.sql.functions import explode, col, from_json, to_date
+from pyspark.sql.types import ArrayType, StructType, StructField, StringType
+
+import psycopg2
+
+# Configuration de la connexion à la base de données PostgreSQL
+conn = psycopg2.connect(
+    dbname="postgres",
+    user="postgres",
+    password="romain",
+    host="172.21.208.1", #localhost WSL
+    #host="localhost", #localhost WINDOWS
+    port=5432
+)
+cur = conn.cursor()
 
 
 # Créer une session Spark
@@ -34,7 +47,6 @@ nonVotants_requete = """
         scrutin.syntheseVote.decompte.nonVotantsVolontaires,
         scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.nonVotants.votant as votant
     FROM parquet_table
-    WHERE scrutin.uid = 'VTANR5L17V10'
 """
 
 pours_requete = """
@@ -50,7 +62,6 @@ pours_requete = """
         scrutin.syntheseVote.decompte.nonVotantsVolontaires,
         scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.pours.votant as votant
     FROM parquet_table
-    WHERE scrutin.uid = 'VTANR5L17V10'
 """
 
 contres_requete = """
@@ -66,7 +77,6 @@ contres_requete = """
         scrutin.syntheseVote.decompte.nonVotantsVolontaires,
         scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.contres.votant as votant
     FROM parquet_table
-    WHERE scrutin.uid = 'VTANR5L17V10'
 """
 
 abstentions_requete = """
@@ -82,7 +92,6 @@ abstentions_requete = """
         scrutin.syntheseVote.decompte.nonVotantsVolontaires,
         scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.abstentions.votant as votant
     FROM parquet_table
-    WHERE scrutin.uid = 'VTANR5L17V10'
 """
 
 requetes = [nonVotants_requete, pours_requete, contres_requete, abstentions_requete] # Liste des requêtes SQL
@@ -122,9 +131,36 @@ for requete in requetes:
     i += 1
 
 # Concaténer les résultats
-result = non_votants.union(pours).union(contres).union(abstentions)
+scrutinSpark = non_votants.union(pours).union(contres).union(abstentions)
 
 # Afficher les résultats
-result.select("votant.acteurRef","votant.mandatRef", "votant.parDelegation", "votant.numPlace", "type_vote").show(n=result.count(), truncate=False)
+scrutinSpark = scrutinSpark.select("uid", "titre", "datescrutin", "libelletypevote", "nonvotants", "pour", "contre", "abstentions", "nonVotantsVolontaires", "votant.acteurRef","votant.mandatRef", "votant.parDelegation", "votant.numPlace", "type_vote")
+#result.select("uid", "titre", "datescrutin", "libelletypevote", "nonvotants", "pour", "contre", "abstentions", "nonVotantsVolontaires", "votant.acteurRef","votant.mandatRef", "votant.parDelegation", "votant.numPlace", "type_vote").show(n=result.count(), truncate=False)
 
+# Mettre au bon format les dates et les colonnes numériques
+scrutinSpark = scrutinSpark.withColumn("datescrutin", to_date(col("datescrutin"), "yyyy-MM-dd"))
+scrutinSpark = scrutinSpark.withColumn("nonvotants", col("nonvotants").cast("int"))
+scrutinSpark = scrutinSpark.withColumn("pour", col("pour").cast("int"))
+scrutinSpark = scrutinSpark.withColumn("contre", col("contre").cast("int"))
+scrutinSpark = scrutinSpark.withColumn("abstentions", col("abstentions").cast("int"))
+scrutinSpark = scrutinSpark.withColumn("nonVotantsVolontaires", col("nonVotantsVolontaires").cast("int"))
+scrutinSpark = scrutinSpark.withColumn("numPlace", col("numPlace").cast("int"))
 
+scrutinSpark.show()
+
+data = scrutinSpark.collect()
+
+# Suppression des données précédentes
+print("Suppression des données précédentes dans la table 'scrutin'...")
+cur.execute("DELETE FROM scrutin")
+
+# Insertion des données dans la table 'scrutin'
+insert_query = """
+    INSERT INTO scrutin (uid, titre, datescrutin, libelletypevote, decompte_nonvotants, decompte_pour, decompte_contre, decompte_abstentions, decompte_nonvotantsvolontaires, acteurref, mandatref, pardelegation, numplace, typevote)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+"""
+cur.executemany(insert_query, data)
+print("Données insérées dans la table 'scrutin'.")
+conn.commit()
+cur.close()
+conn.close()
