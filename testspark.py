@@ -12,7 +12,16 @@ dfScrutins = spark.read.parquet('scrutins_data/2025-02-13/json/parquet') # Lire 
 dfScrutins.createOrReplaceTempView("parquet_table") # Créer une vue temporaire à partir du DataFrame
 print(dfScrutins.columns)
 dfScrutins.printSchema() # Vérifier le schéma complet du DataFrame
-requete1 = """
+
+# Définir le schéma des données JSON
+votant_schema = ArrayType(StructType([
+    StructField("acteurRef", StringType(), True),
+    StructField("mandatRef", StringType(), True),
+    StructField("parDelegation", StringType(), True),
+    StructField("numPlace", StringType(), True)
+]))
+
+nonVotants_requete = """
     SELECT 
         scrutin.uid, 
         scrutin.titre, 
@@ -23,22 +32,99 @@ requete1 = """
         scrutin.syntheseVote.decompte.contre, 
         scrutin.syntheseVote.decompte.abstentions, 
         scrutin.syntheseVote.decompte.nonVotantsVolontaires,
-        scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.abstentions.votant as abstentions_votant
+        scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.nonVotants.votant as votant
     FROM parquet_table
     WHERE scrutin.uid = 'VTANR5L17V10'
 """
 
-# scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.contres.votant as contres_votant,
-# scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.nonVotants.votant as nonVotants_votant,
-# scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.pours.votant as pours_votant
+pours_requete = """
+    SELECT 
+        scrutin.uid, 
+        scrutin.titre, 
+        scrutin.dateScrutin, 
+        scrutin.typeVote.libelleTypeVote, 
+        scrutin.syntheseVote.decompte.nonVotants, 
+        scrutin.syntheseVote.decompte.pour, 
+        scrutin.syntheseVote.decompte.contre, 
+        scrutin.syntheseVote.decompte.abstentions, 
+        scrutin.syntheseVote.decompte.nonVotantsVolontaires,
+        scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.pours.votant as votant
+    FROM parquet_table
+    WHERE scrutin.uid = 'VTANR5L17V10'
+"""
 
-scrutin = spark.sql(requete1) # Exécuter la requête SQL
+contres_requete = """
+    SELECT 
+        scrutin.uid, 
+        scrutin.titre, 
+        scrutin.dateScrutin, 
+        scrutin.typeVote.libelleTypeVote, 
+        scrutin.syntheseVote.decompte.nonVotants, 
+        scrutin.syntheseVote.decompte.pour, 
+        scrutin.syntheseVote.decompte.contre, 
+        scrutin.syntheseVote.decompte.abstentions, 
+        scrutin.syntheseVote.decompte.nonVotantsVolontaires,
+        scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.contres.votant as votant
+    FROM parquet_table
+    WHERE scrutin.uid = 'VTANR5L17V10'
+"""
 
+abstentions_requete = """
+    SELECT 
+        scrutin.uid, 
+        scrutin.titre, 
+        scrutin.dateScrutin, 
+        scrutin.typeVote.libelleTypeVote, 
+        scrutin.syntheseVote.decompte.nonVotants, 
+        scrutin.syntheseVote.decompte.pour, 
+        scrutin.syntheseVote.decompte.contre, 
+        scrutin.syntheseVote.decompte.abstentions, 
+        scrutin.syntheseVote.decompte.nonVotantsVolontaires,
+        scrutin.ventilationVotes.organe.groupes.groupe.vote.decompteNominatif.abstentions.votant as votant
+    FROM parquet_table
+    WHERE scrutin.uid = 'VTANR5L17V10'
+"""
 
-scrutin = scrutin.withColumn("abstentions_votant", F.explode(F.col("abstentions_votant")))
-scrutin = scrutin.filter(F.col("abstentions_votant").isNotNull())
+requetes = [nonVotants_requete, pours_requete, contres_requete, abstentions_requete] # Liste des requêtes SQL
+i=1 # Initialiser un compteur pour les requêtes
 
-#scrutin.show(truncate=False)
-scrutin.show() 
+for requete in requetes:
+    print(f"requete : {i}")
+    
+    # Exécuter la requête SQL
+    scrutin = spark.sql(requete) 
+
+    # Filtrer les lignes où 'votant' n'est pas NULL
+    scrutin = scrutin.filter(F.col("votant").isNotNull())
+
+    # Filtrer les lignes où 'abstentions_votant' est une chaîne de caractères
+    string_scrutin = scrutin.filter(F.col("votant").cast(StringType()).isNotNull())
+    string_scrutin = string_scrutin.withColumn("votant", explode(col("votant")))
+
+    # Convertir les chaînes JSON en structures JSON
+    string_scrutin = string_scrutin.withColumn("votant", from_json(col("votant"), votant_schema))
+    string_scrutin = string_scrutin.withColumn("votant", explode(col("votant")))
+
+    # recupérer les résultats des 4 requetes
+    if i == 1 :
+        string_scrutin = string_scrutin.withColumn("type_vote", F.lit("non_votants"))
+        non_votants = string_scrutin
+    elif i == 2 :
+        string_scrutin = string_scrutin.withColumn("type_vote", F.lit("pours"))
+        pours = string_scrutin
+    elif i == 3 :
+        string_scrutin = string_scrutin.withColumn("type_vote", F.lit("contres"))
+        contres = string_scrutin
+    else :
+        string_scrutin = string_scrutin.withColumn("type_vote", F.lit("abstentions"))
+        abstentions = string_scrutin
+
+    i += 1
+
+# Concaténer les résultats
+result = non_votants.union(pours).union(contres).union(abstentions)
+
+# Afficher les résultats
+result.select("votant.acteurRef","votant.mandatRef", "votant.parDelegation", "votant.numPlace", "type_vote").show(n=result.count(), truncate=False)
 
 
