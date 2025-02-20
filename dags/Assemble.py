@@ -1,7 +1,7 @@
 from airflow import DAG
 from airflow.operators.python_operator import PythonOperator
 from datetime import datetime, timedelta
-from Scripts import download_zip_file, extract_zip_file, delete_zip_file, spark_json_to_parquet, spark_save_to_postgress_scrutins, spark_save_to_postgress_deputesActeur, spark_save_to_postgress_deputesOrgane, analyse
+from Scripts import download_zip_file, extract_zip_file, delete_zip_file, spark_json_to_parquet, spark_save_to_postgress_scrutins, spark_save_to_postgress_deputesActeur, spark_save_to_postgress_deputesOrgane, analyse, postgress_to_elastic
 
 
 # Recuperer la date du jour
@@ -112,7 +112,12 @@ with DAG(
         python_callable=analyse
     )
 
+    elastic = PythonOperator(
+        task_id='elastic',
+        python_callable=postgress_to_elastic
+    )
+
 
     # Ordre d'exécution des tâches
-    [download_deputes_json_zip >> extract_deputes_json_zip >> delete_deputes_json_zip , download_scrutin_json_zip >> extract_scrutin_json_zip >> delete_scrutins_json_zip] >> spark_json_to_parquet >> [spark_savetopostgressScrutins, spark_savetopostgressDeputesActeurs, spark_save_to_postgress_deputesOrgane] >> analyse
+    [download_deputes_json_zip >> extract_deputes_json_zip >> delete_deputes_json_zip , download_scrutin_json_zip >> extract_scrutin_json_zip >> delete_scrutins_json_zip] >> spark_json_to_parquet >> [spark_savetopostgressScrutins, spark_savetopostgressDeputesActeurs, spark_save_to_postgress_deputesOrgane] >> analyse >> elastic
     

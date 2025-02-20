@@ -3,6 +3,8 @@ from pyspark.sql import functions as F
 from pyspark.sql.functions import explode, col, from_json, to_date
 from pyspark.sql.types import ArrayType, StructType, StructField, StringType
 from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.hooks.base_hook import BaseHook
+from elasticsearch import Elasticsearch, helpers
 import pandas as pd
 import matplotlib.pyplot as plt
 import requests
@@ -11,7 +13,7 @@ import os
 
 # Fonction pour télécharger un fichier ZIP
 def download_zip_file(url, zip_filename):
-    print("Téléchargement du fichier ZIP via REST API...")
+    print("Téléchargement du fichier ZIP...")
     response = requests.get(url)
     if response.status_code == 200:
         with open(zip_filename, 'wb') as f:
@@ -50,38 +52,54 @@ def spark_json_to_parquet(deputes_folder, scrutins_folder):
     
     # Convertir deputes_acteur JSON en Parquet
     deputes_acteur_df = spark.read.json(deputes_acteur_json_path)
-    deputes_acteur_parquet_path = os.path.join(f"{deputes_folder}/json/acteur", "parquet")
+    deputes_acteur_parquet_path = os.path.join(f"{deputes_folder}", "parquet/acteur")
     deputes_acteur_df.write.parquet(deputes_acteur_parquet_path, mode="overwrite")
     deputes_acteur_df.unpersist() # Libérer la mémoire
     print("Conversion des fichiers JSON deputes_acteur en fichiers Parquet réussie.")
 
     # Convertir deputes_organe JSON en Parquet
     deputes_organe_df = spark.read.json(deputes_organe_json_path)
-    deputes_organe_parquet_path = os.path.join(f"{deputes_folder}/json/organe", "parquet")
+    deputes_organe_parquet_path = os.path.join(f"{deputes_folder}", "parquet/organe")
     deputes_organe_df.write.parquet(deputes_organe_parquet_path, mode="overwrite")
     deputes_organe_df.unpersist()
     print("Conversion des fichiers JSON deputes_organe en fichiers Parquet réussie.")
 
     # Convertir scrutins JSON en Parquet
     scrutins_df = spark.read.json(scrutins_json_path)
-    scrutins_parquet_path = os.path.join(f"{scrutins_folder}/json", "parquet")
+    scrutins_parquet_path = os.path.join(f"{scrutins_folder}", "parquet")
     scrutins_df.write.parquet(scrutins_parquet_path, mode="overwrite")
     scrutins_df.unpersist()
     print("Conversion des fichiers JSON scrutins en fichiers Parquet réussie.")
     print("Conversion de tous les fichiers JSON en fichiers Parquet réussie.")
 
-# Fonction pour sauvegarder les données Parquet des scrutins dans une base de données Postgres
-def spark_save_to_postgress_scrutins(date): 
+# Fonction pour se connecter à une base de données Postgres
+def connect_to_postgres():
     # Connexion à la base de données via PostgresHook
     hook = PostgresHook(postgres_conn_id='postgressRomain')
     conn = hook.get_conn()
     cur = conn.cursor()
+    return conn, cur
+
+# Fonction pour se connecter à ElasticSearch
+def connect_to_elastic():
+    # Récupérer les informations de connexion à ElasticSearch
+    conn = BaseHook.get_connection('elasticRomain')
+    client = Elasticsearch(
+        f"https://{conn.host}:{conn.port}",
+        api_key=conn.extra_dejson.get('api_key')
+    )
+    return client, conn
+
+# Fonction pour sauvegarder les données Parquet des scrutins dans une base de données Postgres
+def spark_save_to_postgress_scrutins(date): 
+    # Connexion à la base de données
+    conn, cur = connect_to_postgres()
 
     # Créer une session Spark
     spark = SparkSession.builder.appName("LireParquet").getOrCreate()
 
     # Scrutins
-    dfScrutins = spark.read.parquet(f'scrutins_data/{date}/json/parquet') # Lire le fichier Parquet
+    dfScrutins = spark.read.parquet(f'scrutins_data/{date}/parquet') # Lire le fichier Parquet
     dfScrutins.createOrReplaceTempView("parquet_table") # Créer une vue temporaire à partir du DataFrame
     print(dfScrutins.columns)
     dfScrutins.printSchema() # Vérifier le schéma complet du DataFrame
@@ -227,16 +245,14 @@ def spark_save_to_postgress_scrutins(date):
 
 # Fonction pour sauvegarder les données Parquet des députés acteurs dans une base de données Postgres
 def spark_save_to_postgress_deputesActeur(date):
-    # Connexion à la base de données via PostgresHook
-    hook = PostgresHook(postgres_conn_id='postgressRomain')
-    conn = hook.get_conn()
-    cur = conn.cursor()
+    # Connexion à la base de données
+    conn, cur = connect_to_postgres()
 
     # Créer une session Spark
     spark = SparkSession.builder.appName("LireParquet").getOrCreate()
 
     # Deputes Acteurs
-    dfDeputesActeurs = spark.read.parquet(f'deputes_data/{date}/json/acteur/parquet') # Lire le fichier Parquet
+    dfDeputesActeurs = spark.read.parquet(f'deputes_data/{date}/parquet/acteur') # Lire le fichier Parquet
     dfDeputesActeurs.createOrReplaceTempView("parquet_table") # Créer une vue temporaire à partir du DataFrame
     print(dfDeputesActeurs.columns)
     dfDeputesActeurs.printSchema() # Vérifier le schéma complet du DataFrame
@@ -298,16 +314,14 @@ def spark_save_to_postgress_deputesActeur(date):
 
 # Fonction pour sauvegarder les données Parquet des députés organes dans une base de données Postgres
 def spark_save_to_postgress_deputesOrgane(date):
-    # Connexion à la base de données via PostgresHook
-    hook = PostgresHook(postgres_conn_id='postgressRomain')
-    conn = hook.get_conn()
-    cur = conn.cursor()
+    # Connexion à la base de données
+    conn, cur = connect_to_postgres()
 
     # Créer une session Spark
     spark = SparkSession.builder.appName("LireParquet").getOrCreate()
 
     # Deputes Organes
-    dfDeputesOrganes = spark.read.parquet(f'deputes_data/{date}/json/organe/parquet') # Lire le fichier Parquet
+    dfDeputesOrganes = spark.read.parquet(f'deputes_data/{date}/parquet/organe') # Lire le fichier Parquet
     dfDeputesOrganes.createOrReplaceTempView("parquet_table") # Créer une vue temporaire à partir du DataFrame
     print(dfDeputesOrganes.columns)
     dfDeputesOrganes.printSchema() # Vérifier le schéma complet du DataFrame
@@ -348,12 +362,7 @@ def spark_save_to_postgress_deputesOrgane(date):
 # Fonction pour analyser les données et calculer les KPI
 def analyse():
     # Connexion à la base de données via PostgresHook
-    hook = PostgresHook(postgres_conn_id='postgressRomain')
-    conn = hook.get_conn()
-    cur = conn.cursor()
-
-    # Créer une session Spark
-    spark = SparkSession.builder.appName("LireParquet").getOrCreate()
+    conn, cur = connect_to_postgres()
 
     # Suppression des données précédentes
     cur.execute("DELETE FROM cumulscrutin")
@@ -383,9 +392,13 @@ def analyse():
     """
     )
     print("Données insérées dans la table 'cumulscrutin'.")
-    
 
-    cur.execute("""
+    # Suppression des données précédentes de la table kpi
+    cur.execute("DELETE FROM kpi")
+    print("Données supprimées dans la table 'kpi'.")
+    
+    # Requête SQL pour calculer les KPI
+    kpi_requete = """
         SELECT a.uid, 
             a.nom, 
             a.prenom, 
@@ -407,9 +420,16 @@ def analyse():
         GROUP BY a.uid, a.nom, a.prenom, a.dateprisefonction, o.libelle, sc.nbscrutincumuldiff
 		ORDER BY ratio desc
     """
-    )
 
-    # Récupérer les résultats de la requête
+     # Exécuter la requête SQL et insérer les résultats dans la table kpi
+    cur.execute(f"""
+        INSERT INTO kpi (uid, nom, prenom, dateprisefonction, libelle, nbvote, nbscrutincumuldiff, ratio)
+        {kpi_requete}
+    """)
+    print("Résultats insérés dans la table 'kpi'.")
+
+    # Récupérer les résultats de la requête pour les visualiser
+    cur.execute(kpi_requete)
     kpi = cur.fetchall()
     print("KPI calculés avec succès.")
 
@@ -433,5 +453,60 @@ def analyse():
     cur.close()
     conn.close()
 
+# Fonction pour préparer les données pour ElasticSearch
+def prepare_data_for_elasticsearch(rows, columns):
+    # Créer une liste de dictionnaires
+    data = []
+    for row in rows:
+        doc = {columns[i]: row[i] for i in range(len(columns))}
+        data.append(doc)
+    return data
 
+# Fonction pour ecrire dans elastic
+def postgress_to_elastic() :
+    # Connexion à la base de données 
+    conn, cur = connect_to_postgres()
 
+    # Requête pour récupérer toutes les lignes d'une table
+    cur.execute("SELECT * FROM kpi")
+
+    # Récupérer toutes les lignes
+    rows = cur.fetchall()
+
+    # Récupérer les noms des colonnes (facultatif, pour faciliter l'intégration dans ElasticSearch)
+    columns = [desc[0] for desc in cur.description]
+
+    # Fermer la connexion postgress
+    cur.close()
+    conn.close()
+
+    # Préparer les données
+    prepared_data = prepare_data_for_elasticsearch(rows, columns)
+
+    # Se connecter à ElasticSearch
+    client, conn = connect_to_elastic()
+
+    # Récupérer le nom de l'index à partir de la connexion
+    index_name = conn.extra_dejson.get('index_name')
+
+    # Supprimer tous les documents existants dans ElasticSearch
+    client.delete_by_query(index=index_name, body={
+        "query": {
+            "match_all": {}  # Supprimer tous les documents
+        }
+    })
+    print("Suppression des données Elastic réussie.")
+
+    # Insérer les données dans ElasticSearch
+    actions = [
+        {
+            "_op_type": "index",  # 'index' pour insérer ou mettre à jour les documents
+            "_index": index_name,
+            "_source": doc
+        }
+        for doc in prepared_data
+    ]
+
+    # Envoi des données à ElasticSearch via bulk
+    response = helpers.bulk(client, actions)
+    print(f"Envoi réussi, {response[0]} documents insérés dans Elastic.")
