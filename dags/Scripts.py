@@ -374,7 +374,7 @@ def analyse():
 			SELECT datescrutin, 
 	                nbscrutin, 
 	                nbscrutincumul,
-	                (MAX(nbscrutincumul) OVER () - nbscrutincumul) + 1 AS nbscrutincumuldiff
+	                (MAX(nbscrutincumul) OVER (ORDER BY datescrutin desc) - nbscrutincumul) AS nbscrutincumuldiff
 	        FROM (
 	            SELECT datescrutin, 
 	                    nbscrutin,
@@ -410,7 +410,7 @@ def analyse():
         FROM scrutin s
         JOIN acteur a ON s.acteurref = a.uid
         JOIN organe o ON a.partiid = o.uid
-		JOIN cumulscrutin sc ON sc.datescrutin >= a.dateprisefonction
+		JOIN cumulscrutin sc ON sc.datescrutin > a.dateprisefonction
 		WHERE NOT EXISTS ( 
 			SELECT 1
     		FROM cumulscrutin sc2
