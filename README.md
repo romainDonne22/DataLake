@@ -25,14 +25,18 @@ Ce projet a pour but de récupérer les informations des scrutins et des déput�
 
 ## 🤖 Workflow entierement automatisé avec Apach AIRFLOW : 
 
-👉 [VAirflow Workflow](./output/Airflow.png)
+<p align="center">
+  <img src="./output/Airflow.png" alt="Workflow Airflow" width="30%">
+</p>
 
 ---
 
 ## 📄 Résultats obtenus
 
-👉 [distributionParDeputes](./output/distributionParDeputes.png)
-👉 [distributionParPartis](./output/distributionParPartis.png)
+<p align="center">
+  <img src="./output/distributionParDeputes.png" alt="Distribution par Députés" width="30%">
+  <img src="./output/distributionParPartis.png" alt="Distribution par Partis" width="30%">
+</p>
 
 ---
 
